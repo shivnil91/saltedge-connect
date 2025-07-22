@@ -11,7 +11,7 @@ function signedHeaders(url, method, params) {
     payload += JSON.stringify(params);
   }
 
-  const privateKey = fs.readFileSync("./private.pem");
+  const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, '\n');
   const signer     = crypto.createSign("sha256");
 
   signer.update(payload);
