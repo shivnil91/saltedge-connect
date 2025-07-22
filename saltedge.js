@@ -1,7 +1,11 @@
 const fs          = require("fs");
 const https       = require("https");
 const crypto      = require("crypto");
-const credentials = require("./credentials.json");
+const credentials = {
+  app_id: process.env.APP_ID,
+  secret: process.env.SECRET,
+  private_key: process.env.PRIVATE_KEY
+};
 
 function signedHeaders(url, method, params) {
   const expiresAt = Math.floor(new Date().getTime() / 1000 + 60);
@@ -11,7 +15,7 @@ function signedHeaders(url, method, params) {
     payload += JSON.stringify(params);
   }
 
-  const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  const privateKey = credentials.private_key.replace(/\\n/g, '\n');
   const signer     = crypto.createSign("sha256");
 
   signer.update(payload);
