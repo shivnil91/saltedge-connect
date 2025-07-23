@@ -34,7 +34,7 @@ const options = {
   hostname: "gateway.saltedge.com",
   path: "/api/v5/countries",
   method: "GET",
-  headers: signedHeaders("/api/v5/countries", "GET", null)
+  headers: signedHeaders("https://gateway.saltedge.com/api/v5/countries", "GET", null)
 };
 
 const req = https.request(options, (res) => {
