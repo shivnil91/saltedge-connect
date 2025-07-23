@@ -1,60 +1,44 @@
-const fs          = require("fs");
-const https       = require("https");
-const crypto      = require("crypto");
+const fs = require("fs");
+const https = require("https");
+const crypto = require("crypto");
+
+// Credentials pulled from environment variables
 const credentials = {
   app_id: process.env.APP_ID,
   secret: process.env.SECRET,
-  private_key: process.env.PRIVATE_KEY
+  private_key: process.env.SALTEDGE_PRIVATE_KEY
 };
 
+// Function to create signed headers
 function signedHeaders(url, method, params) {
-  const expiresAt = Math.floor(new Date().getTime() / 1000 + 60);
-  let payload     = expiresAt + "|" + method + "|" + url + "|";
+  const expiresAt = Math.floor(Date.now() / 1000 + 60);
+  let payload = `${expiresAt}|${method}|${url}|`;
 
   if (method === "POST") {
     payload += JSON.stringify(params);
   }
 
   const privateKey = credentials.private_key.replace(/\\n/g, '\n');
-  const signer     = crypto.createSign("sha256");
+  const signer = crypto.createSign("sha256");
 
   signer.update(payload);
   signer.end();
 
   return {
-    "Accept":       "application/json",
-    "App-id":       credentials.app_id,
+    "Accept": "application/json",
+    "App-id": credentials.app_id,
     "Content-Type": "application/json",
-    "Expires-at":   expiresAt,
-    "Secret":       credentials.secret,
-    "Signature":    signer.sign(privateKey, "base64"),
-  }
+    "Expires-at": expiresAt,
+    "Secret": credentials.secret,
+    "Signature": signer.sign(privateKey, "base64"),
+  };
 }
 
-// Use this function to verify signature in callbacks. The verification can be performed on connect_session callbacks.
-// https://docs.saltedge.com/v6/#callbacks-request-identification
-//
-// signature   - could be obtained from headers["signature"]
-// callbackUrl - url that you add in SE dashboard, as example: https://client-app.com/aisp/callbacks/success
-// postBody    - request body as string
-//
-// Example (server.js):
-// const app        = require("express")();
-// const bodyParser = require("body-parser");
-//
-// const callbackUrl = [callbackUrl];
-// const port        = [port];
-// app.post("/aisp/callbacks/success", function (req, res) {
-//   verifySignature(req.headers.signature, callbackUrl, JSON.stringify(req.body))
-//   res.end();
-// });
-// app.listen(port);
-
+// Optional callback signature verification
 function verifySignature(signature, callbackUrl, postBody) {
-  const payload = callbackUrl + "|" + postBody;
-
+  const payload = `${callbackUrl}|${postBody}`;
   const publicKey = fs.readFileSync("../spectre_public.pem");
-  const verifier  = crypto.createVerify("sha256");
+  const verifier = crypto.createVerify("sha256");
 
   verifier.update(payload);
   verifier.end();
@@ -62,6 +46,7 @@ function verifySignature(signature, callbackUrl, postBody) {
   return verifier.verify(publicKey, signature, "base64");
 }
 
+// Make a request to Salt Edge
 function request(options) {
   options.headers = signedHeaders(options.url, options.method, options.data);
 
@@ -78,7 +63,7 @@ function request(options) {
         const data = Buffer.concat(chunks).toString();
         reject(data);
       });
-    })
+    });
 
     if (options.data && options.method !== "GET") {
       req.write(JSON.stringify(options.data));
@@ -88,59 +73,49 @@ function request(options) {
   });
 }
 
-// get countries
-let url = "https://www.saltedge.com/api/v6/countries"
-
+// Test 1: Get countries
 request({
-  method:  "GET",
-  url:     url
-}).then(data => console.log(data))
-  .catch(data => console.error(data))
-
-// create a customer
-url    = "https://www.saltedge.com/api/v6/customers"
-params = {
-  data: {
-    identifier: "my_unique_sdidentifier" // customer email
-  }
-}
-
-request({
-  method:  "POST",
-  url:     url,
-  data:    params
+  method: "GET",
+  url: "https://www.saltedge.com/api/v6/countries"
 })
-  .then(data => console.log(data))
-  .catch(data => console.error(data))
+  .then(data => console.log("Countries:", data))
+  .catch(err => console.error("Countries error:", err));
 
-// created customer data example:
-// { "data": { "id": "[customer_id]", "identifier": "[customer_identifier]", "created_at": "2025-01-14T14:47:52Z", "updated_at": "2025-01-14T14:47:52Z", "secret": "[customer_secret]" } }
-
-// create connect session (after create customer)
-url = "https://www.saltedge.com/api/v6/connections/connect";
-
-params = {
-  data: {
-    customer_id: "", // set customer id that was gotten after customer create
-    consent: {
-      scopes: ["accounts", "transactions"]
-    },
-    attempt: {
-      return_to:    "https://www.example.com",
-      fetch_scopes: ["accounts", "transactions"]
-    },
-    widget: {
-      javascript_callback_type: "post_message" // We need to tell Salt Edge to use postMessage for callback notifications
-    },
-    provider: {
-      include_sandboxes: true
-    }
-  }
-}
-
+// Test 2: Create a customer
 request({
   method: "POST",
-  url:    url,
-  data:   params
-}).then(data => console.log(data))
-  .catch(data => console.error(data))
+  url: "https://www.saltedge.com/api/v6/customers",
+  data: {
+    data: {
+      identifier: "my_unique_sdidentifier" // replace with email or unique ID
+    }
+  }
+})
+  .then(data => console.log("Customer created:", data))
+  .catch(err => console.error("Customer create error:", err));
+
+// Test 3: Create connect session
+request({
+  method: "POST",
+  url: "https://www.saltedge.com/api/v6/connections/connect",
+  data: {
+    data: {
+      customer_id: "", // insert valid customer_id from above call
+      consent: {
+        scopes: ["accounts", "transactions"]
+      },
+      attempt: {
+        return_to: "https://www.example.com",
+        fetch_scopes: ["accounts", "transactions"]
+      },
+      widget: {
+        javascript_callback_type: "post_message"
+      },
+      provider: {
+        include_sandboxes: true
+      }
+    }
+  }
+})
+  .then(data => console.log("Connect session:", data))
+  .catch(err => console.error("Connect session error:", err));
