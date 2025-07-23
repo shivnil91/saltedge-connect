@@ -1,115 +1,105 @@
-const fs = require("fs");
 const https = require("https");
 const crypto = require("crypto");
+const credentials = require("./credentials.json");
 
-// Load credentials from environment variables in Render
-const credentials = {
-  app_id: process.env.APP_ID,
-  secret: process.env.SECRET,
-  private_key: process.env.SALTEDGE_PRIVATE_KEY // Must be a one-line escaped private key
-};
-
-// Sign Salt Edge request
-function signedHeaders(url, method, params) {
-  const expiresAt = Math.floor(new Date().getTime() / 1000 + 60);
+// Helper function to create signed headers for Salt Edge API requests
+function signedHeaders(url, method, params = {}) {
+  const expiresAt = Math.floor(Date.now() / 1000) + 60;
   let payload = `${expiresAt}|${method}|${url}|`;
 
-  if (method === "POST" && params) {
+  if (method === "POST") {
     payload += JSON.stringify(params);
   }
 
-  const privateKey = credentials.private_key.replace(/\\n/g, "\n");
+  const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, "\n");
   const signer = crypto.createSign("sha256");
   signer.update(payload);
   signer.end();
 
   return {
-    "Accept": "application/json",
+    Accept: "application/json",
     "App-id": credentials.app_id,
-    "Secret": credentials.secret,
     "Content-Type": "application/json",
     "Expires-at": expiresAt,
-    "Signature": signer.sign(privateKey, "base64")
+    Secret: credentials.secret,
+    Signature: signer.sign(privateKey, "base64")
   };
 }
 
-// Make HTTP request
-function request(options) {
-  options.headers = signedHeaders(options.url, options.method, options.data);
-
+// Helper to send HTTPS requests to Salt Edge
+function request({ method, url, data = {} }) {
   return new Promise((resolve, reject) => {
-    const req = https.request(options.url, options, (res) => {
-      const chunks = [];
+    const fullUrl = new URL(url);
+    const options = {
+      hostname: fullUrl.hostname,
+      path: fullUrl.pathname + fullUrl.search,
+      method,
+      headers: signedHeaders(url, method, data)
+    };
 
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        const data = Buffer.concat(chunks).toString();
-        res.statusCode === 200 ? resolve(data) : reject(data);
-      });
+    const req = https.request(options, res => {
+      let body = "";
+      res.on("data", chunk => (body += chunk));
+      res.on("end", () => resolve(body));
     });
 
-    req.on("error", (err) => reject(err));
-
-    if (options.data && options.method !== "GET") {
-      req.write(JSON.stringify(options.data));
-    }
-
+    req.on("error", reject);
+    if (method === "POST") req.write(JSON.stringify(data));
     req.end();
   });
 }
 
-// Run tests
+// Main logic
+(async () => {
+  try {
+    // Step 1: Get countries (sample GET request to verify connection)
+    const countries = await request({
+      method: "GET",
+      url: "https://www.saltedge.com/api/v6/countries"
+    });
+    console.log("Countries:", countries);
 
-// STEP 1: Get supported countries
-request({
-  method: "GET",
-  url: "https://www.saltedge.com/api/v6/countries"
-})
-.then(data => console.log("Countries:", data))
-.catch(err => console.error("Countries error:", err));
-
-// STEP 2: Create customer
-request({
-  method: "POST",
-  url: "https://www.saltedge.com/api/v6/customers",
-  data: {
-    data: {
-      identifier: "testuser@thirdroc.com" // must be unique
-    }
-  }
-})
-.then(data => {
-  console.log("Customer created:", data);
-  const parsed = JSON.parse(data);
-  const customerId = parsed.data.id;
-
-  // STEP 3: Create connect session using customerId
-  return request({
-    method: "POST",
-    url: "https://www.saltedge.com/api/v6/connections/connect",
-    data: {
+    // Step 2: Create customer
+    const customerData = await request({
+      method: "POST",
+      url: "https://www.saltedge.com/api/v6/customers",
       data: {
-        customer_id: customerId,
-        consent: {
-          scopes: ["accounts", "transactions"]
-        },
-        attempt: {
-          return_to: "https://yourdomain.com/return", // your frontend
-          fetch_scopes: ["accounts", "transactions"]
-        },
-        widget: {
-          javascript_callback_type: "post_message"
-        },
-        provider: {
-          include_sandboxes: true
+        data: {
+          identifier: "testuser@thirdroc.com"
         }
       }
-    }
-  });
-})
-.then(data => {
-  console.log("Connect session created:", data);
-})
-.catch(err => {
-  console.error("Error during customer or session creation:", err);
-});
+    });
+
+    console.log("Customer created:", customerData);
+    const parsedCustomer = JSON.parse(customerData);
+    const customerId = parsedCustomer.data.customer_id;
+
+    // Step 3: Create connect session
+    const sessionData = await request({
+      method: "POST",
+      url: "https://www.saltedge.com/api/v6/connections/connect",
+      data: {
+        data: {
+          customer_id: customerId,
+          consent: {
+            scopes: ["accounts", "transactions"]
+          },
+          attempt: {
+            return_to: "https://yourdomain.com/return", // CHANGE THIS
+            fetch_scopes: ["accounts", "transactions"]
+          },
+          widget: {
+            javascript_callback_type: "post_message"
+          },
+          provider: {
+            include_sandboxes: true
+          }
+        }
+      }
+    });
+
+    console.log("Connect session:", sessionData);
+  } catch (err) {
+    console.error("Error during customer or session creation:", err.message || err);
+  }
+})();
