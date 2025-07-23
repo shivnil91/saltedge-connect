@@ -1,12 +1,11 @@
-const crypto = require("crypto");
 const https = require("https");
+const crypto = require("crypto");
 
-const credentials = {
-  app_id: process.env.SALTEDGE_APP_ID,
-  secret: process.env.SALTEDGE_SECRET
-};
+const appId     = process.env.SALTEDGE_APP_ID;
+const secret    = process.env.SALTEDGE_SECRET;
+const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
-function signedHeaders(url, method, params) {
+function signedHeaders(url, method, params = {}) {
   const expiresAt = Math.floor(new Date().getTime() / 1000 + 60);
   let payload = `${expiresAt}|${method}|${url}|`;
 
@@ -14,29 +13,31 @@ function signedHeaders(url, method, params) {
     payload += JSON.stringify(params);
   }
 
-  const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, '\n');
   const signer = crypto.createSign("sha256");
-
   signer.update(payload);
   signer.end();
 
+  const signature = signer.sign(privateKey, "base64");
+
   return {
-    "Accept": "application/json",
-    "App-id": credentials.app_id,
+    "Accept":       "application/json",
     "Content-Type": "application/json",
-    "Expires-at": expiresAt,
-    "Secret": credentials.secret,
-    "Signature": signer.sign(privateKey, "base64"),
+    "App-id":       appId,
+    "Secret":       secret,
+    "Expires-at":   expiresAt,
+    "Signature":    signature
   };
 }
 
-// Example: Get list of countries from Salt Edge
 function getCountries() {
+  const method = "GET";
+  const url = "/api/v5/countries";
+
   const options = {
     hostname: "www.saltedge.com",
-    path: "/api/v5/countries",
-    method: "GET",
-    headers: signedHeaders("/api/v5/countries", "GET")
+    path: url,
+    method: method,
+    headers: signedHeaders(url, method)
   };
 
   const req = https.request(options, res => {
@@ -44,19 +45,20 @@ function getCountries() {
     res.on("data", chunk => { data += chunk; });
     res.on("end", () => {
       try {
-        console.log("Countries:", JSON.parse(data));
-      } catch (e) {
-        console.error("Failed to parse response:", e);
+        const json = JSON.parse(data);
+        console.log("Countries:", json);
+      } catch (err) {
+        console.error("Failed to parse response:", err.message);
       }
     });
   });
 
-  req.on("error", e => {
-    console.error("Request error:", e);
+  req.on("error", error => {
+    console.error("Request error:", error);
   });
 
   req.end();
 }
 
-// Run example
+// Run the test
 getCountries();
