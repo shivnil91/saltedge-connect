@@ -2,62 +2,60 @@ const fs = require("fs");
 const https = require("https");
 const crypto = require("crypto");
 
-const credentials = require("./credentials.json");
+const credentials = {
+  app_id: process.env.SALTEDGE_APP_ID,
+  secret: process.env.SALTEDGE_SECRET
+};
 
-function signedHeaders(url, method, params = null) {
-  const expiresAt = Math.floor(Date.now() / 1000) + 60;
-
+function signedHeaders(url, method, params) {
+  const expiresAt = Math.floor(Date.now() / 1000 + 60);
   let payload = `${expiresAt}|${method}|${url}|`;
-  if (method === "POST" && params) {
+
+  if (method === "POST") {
     payload += JSON.stringify(params);
   }
 
-  const privateKey = fs.readFileSync("private.pem", "utf8");
-
-  const signer = crypto.createSign("RSA-SHA256");
+  const privateKey = process.env.SALTEDGE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  const signer = crypto.createSign("sha256");
   signer.update(payload);
   signer.end();
-
-  const signature = signer.sign(privateKey, "base64");
 
   return {
     "Accept": "application/json",
     "App-id": credentials.app_id,
+    "Content-Type": "application/json",
+    "Expires-at": expiresAt,
     "Secret": credentials.secret,
-    "Expires-at": expiresAt.toString(),
-    "Signature": signature,
-    "Content-Type": "application/json"
+    "Signature": signer.sign(privateKey, "base64")
   };
 }
 
-function fetchCountries() {
-  const path = "/api/v5/countries";
-  const options = {
-    hostname: "www.saltedge.com",
-    path: path,
-    method: "GET",
-    headers: signedHeaders(path, "GET")
-  };
+const options = {
+  hostname: "gateway.saltedge.com",
+  path: "/api/v5/countries",
+  method: "GET",
+  headers: signedHeaders("/api/v5/countries", "GET", null)
+};
 
-  const req = https.request(options, (res) => {
-    let data = "";
-    res.on("data", (chunk) => {
-      data += chunk;
-    });
-    res.on("end", () => {
-      try {
-        console.log("Countries:", JSON.parse(data));
-      } catch (e) {
-        console.error("Failed to parse response:", e);
-      }
-    });
+const req = https.request(options, (res) => {
+  let data = "";
+
+  res.on("data", (chunk) => {
+    data += chunk;
   });
 
-  req.on("error", (e) => {
-    console.error("Request failed:", e);
+  res.on("end", () => {
+    try {
+      const json = JSON.parse(data);
+      console.log("Countries:", json);
+    } catch (e) {
+      console.error("Failed to parse response:", e.message);
+    }
   });
+});
 
-  req.end();
-}
+req.on("error", (error) => {
+  console.error("Request error:", error);
+});
 
-fetchCountries();
+req.end();
